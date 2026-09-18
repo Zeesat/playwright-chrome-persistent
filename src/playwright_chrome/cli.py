@@ -1,8 +1,12 @@
 import argparse
 import sys
 import os
+import time
+import json
 import sqlite3
+import subprocess
 from pathlib import Path
+from typing import Optional
 from .core import (
     launch_persistent_browser,
     get_profile_dir,
@@ -10,6 +14,7 @@ from .core import (
     clean_locks,
     is_cdp_active,
     connect_cdp,
+    ensure_host,
     DEFAULT_CDP_PORT,
     DEFAULT_CDP_HOST,
 )
@@ -70,7 +75,6 @@ def cmd_login(args: argparse.Namespace) -> int:
 
 
 def cmd_open(args: argparse.Namespace) -> int:
-    """Open persistent browser to a specified URL, reusing active CDP session if running."""
     profile_path = get_profile_dir(args.profile)
     url = args.url or "https://myaccount.google.com/"
 
@@ -79,6 +83,22 @@ def cmd_open(args: argparse.Namespace) -> int:
         return 1
 
     port = getattr(args, "port", DEFAULT_CDP_PORT)
+    is_non_interactive = not sys.stdin.isatty()
+    should_detach = getattr(args, "detach", False) or is_non_interactive
+
+    if not is_cdp_active(port=port):
+        if should_detach:
+            print(f"[+] Active Chrome host not detected. Auto-starting persistent host daemon on 127.0.0.1:{port}...")
+            ok = ensure_host(
+                port=port,
+                profile=args.profile,
+                channel=args.channel,
+                headless=args.headless,
+            )
+            if not ok:
+                print(f"[-] Error: Failed to start Chrome host daemon on port {port}.", file=sys.stderr)
+                return 1
+
     if is_cdp_active(port=port):
         print(f"[+] Active Chrome instance detected on CDP port {port}.")
         p, browser, context, page = connect_cdp(port=port)
@@ -118,6 +138,73 @@ def cmd_open(args: argparse.Namespace) -> int:
     context.close()
     p.stop()
     return 0
+
+
+def cmd_ensure_host(args: argparse.Namespace) -> int:
+    port = getattr(args, "port", DEFAULT_CDP_PORT)
+    profile_path = get_profile_dir(args.profile)
+    if is_cdp_active(port=port):
+        print(f"[+] Persistent Chrome host is ALREADY ACTIVE on 127.0.0.1:{port} (profile: {profile_path})")
+        return 0
+
+    print(f"[+] Starting persistent Chrome host daemon on 127.0.0.1:{port} (profile: {profile_path})...")
+    ok = ensure_host(
+        port=port,
+        profile=args.profile,
+        channel=args.channel,
+        headless=getattr(args, "headless", False),
+    )
+    if ok:
+        print(f"[+] Success! Persistent Chrome host is READY and listening on 127.0.0.1:{port}")
+        return 0
+    else:
+        print(f"[-] Error: Persistent Chrome host failed to start within timeout on port {port}", file=sys.stderr)
+        return 1
+
+
+def cmd_stop_host(args: argparse.Namespace) -> int:
+    port = getattr(args, "port", DEFAULT_CDP_PORT)
+    profile_path = get_profile_dir(args.profile)
+    stop_flag = Path(profile_path) / ".stop_host"
+    meta_file = Path(profile_path) / ".cdp_host.json"
+
+    if not is_cdp_active(port=port):
+        print(f"[+] No active Chrome host detected on 127.0.0.1:{port}.")
+        clean_locks(profile_path)
+        return 0
+
+    print(f"[+] Sending shutdown signal to Chrome host on 127.0.0.1:{port}...")
+    try:
+        stop_flag.touch()
+    except OSError:
+        pass
+
+    for _ in range(25):
+        if not is_cdp_active(port=port):
+            break
+        time.sleep(0.2)
+
+    if is_cdp_active(port=port) and meta_file.exists():
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            pid = meta.get("pid")
+            if pid and sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid), "/T"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        except Exception:
+            pass
+
+    clean_locks(profile_path)
+    if not is_cdp_active(port=port):
+        print(f"[+] Chrome host stopped cleanly.")
+        return 0
+    else:
+        print(f"[!] Warning: Chrome host may still be running.", file=sys.stderr)
+        return 1
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -243,7 +330,26 @@ def main():
     )
     open_parser.add_argument("url", nargs="?", default="https://myaccount.google.com/", help="URL to open")
     open_parser.add_argument("--headless", action="store_true", help="Run in headless mode")
+    open_parser.add_argument("--detach", "-d", action="store_true", help="Run in background daemon mode without blocking")
     open_parser.set_defaults(func=cmd_open)
+
+    # ensure-host / start-host command
+    host_parser = subparsers.add_parser(
+        "ensure-host",
+        aliases=["start-host"],
+        parents=[common_parser],
+        help="Start persistent Chrome host daemon in background if not already running",
+    )
+    host_parser.add_argument("--headless", action="store_true", help="Run host in headless mode")
+    host_parser.set_defaults(func=cmd_ensure_host)
+
+    # stop-host command
+    stop_parser = subparsers.add_parser(
+        "stop-host",
+        parents=[common_parser],
+        help="Stop persistent Chrome host daemon",
+    )
+    stop_parser.set_defaults(func=cmd_stop_host)
 
     # status command
     status_parser = subparsers.add_parser(

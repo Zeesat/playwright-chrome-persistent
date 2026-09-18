@@ -2,6 +2,8 @@ import os
 import sys
 import glob
 import json
+import time
+import subprocess
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -215,3 +217,59 @@ def connect_cdp(
     except Exception:
         p.stop()
         raise
+
+
+def ensure_host(
+    port: int = DEFAULT_CDP_PORT,
+    host: str = DEFAULT_CDP_HOST,
+    profile: Optional[str] = None,
+    channel: str = "chrome",
+    headless: bool = False,
+    timeout: float = 12.0,
+) -> bool:
+    if is_cdp_active(port=port, host=host):
+        return True
+
+    profile_path = get_profile_dir(profile)
+    clean_locks(profile_path)
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "playwright_chrome.host",
+        "--port",
+        str(port),
+        "--host",
+        str(host),
+        "--profile",
+        profile_path,
+        "--channel",
+        channel,
+    ]
+    if headless:
+        cmd.append("--headless")
+
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        )
+
+    subprocess.Popen(
+        cmd,
+        creationflags=creationflags,
+        close_fds=(sys.platform != "win32"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+    )
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if is_cdp_active(port=port, host=host):
+            return True
+        time.sleep(0.3)
+
+    return is_cdp_active(port=port, host=host)
+

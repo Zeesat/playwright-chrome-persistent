@@ -13,6 +13,7 @@ from .core import (
     clean_locks,
     is_cdp_active,
     connect_cdp,
+    ensure_host,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "clean_locks",
     "is_cdp_active",
     "connect_cdp",
+    "ensure_host",
 ]

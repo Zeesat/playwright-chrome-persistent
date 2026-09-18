@@ -3,7 +3,8 @@
 A robust, self-contained automation profile manager and CLI utility for Playwright on Windows, macOS, and Linux. It maintains persistent Google account authentication across test and automation runs without session invalidation or cookie resets.
 
 > **⚡ AI QUICK USE (NO NEED TO READ .PY SOURCE FILES)**:
-> - **Open URL in persistent browser (CLI)**: `playwright-chrome open "<url>"` (auto-reuses CDP on 9222 or launches new session)
+> - **Open URL in persistent browser (Non-blocking CLI)**: `playwright-chrome open "<url>"` (auto-reuses CDP on 9222 or auto-spawns background host daemon)
+> - **Host daemon lifecycle**: `playwright-chrome ensure-host` and `playwright-chrome stop-host`
 > - **Interactive Google login**: `playwright-chrome login`
 > - **Attach to running browser in Python**:
 >   ```python
@@ -221,8 +222,10 @@ When executing `playwright-chrome open <url>` against an already-running session
 
 | Command | Arguments | Description |
 |---|---|---|
+| `ensure-host` (or `start-host`) | `[--headless] [--port PORT]` | Starts persistent Chrome daemon in background if not running. |
+| `stop-host` | `[--port PORT]` | Gracefully stops the background Chrome daemon. |
+| `open` | `[url] [--detach] [--headless] [--port PORT]` | Opens persistent browser to URL. Auto-spawns background host if called non-interactively. |
 | `login` | `[--port PORT]` | Opens visible Chrome to perform initial Google login. |
-| `open` | `[url]` `[--headless]` `[--port PORT]` | Opens persistent browser to specified URL, reusing active session if present. |
 | `status` | `[--port PORT]` | Displays profile path, CDP readiness, initialization status, disk size, and cookie count. |
 | `clean-locks` | None | Removes stale lockfiles if browser process crashed unexpectedly. |
 
