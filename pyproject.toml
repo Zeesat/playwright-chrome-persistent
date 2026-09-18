@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "playwright-chrome-persistent"
+version = "1.0.0"
+description = "Persistent Google Chrome automation profile manager for Playwright"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.40.0",
+]
+
+[project.scripts]
+playwright-chrome = "playwright_chrome.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

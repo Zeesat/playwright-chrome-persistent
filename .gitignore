@@ -1,0 +1,20 @@
+# Persistent profile data (contains session cookies, credentials, local databases)
+.chrome_profile/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Environment files
+.env
+.env.local
