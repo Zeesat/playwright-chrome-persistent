@@ -1,11 +1,16 @@
 import os
 import sys
 import glob
+import json
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Tuple, Optional
-from playwright.sync_api import sync_playwright, Playwright, BrowserContext, Page
+from playwright.sync_api import sync_playwright, Playwright, Browser, BrowserContext, Page
 
 DEFAULT_PROFILE_DIR_NAME = ".chrome_profile"
+DEFAULT_CDP_PORT = 9222
+DEFAULT_CDP_HOST = "127.0.0.1"
 
 ANTI_DETECTION_ARGS = [
     "--disable-blink-features=AutomationControlled",
@@ -80,6 +85,8 @@ def launch_persistent_browser(
     user_data_dir: Optional[str] = None,
     channel: str = "chrome",
     extra_args: Optional[list] = None,
+    cdp_port: Optional[int] = DEFAULT_CDP_PORT,
+    cdp_host: str = DEFAULT_CDP_HOST,
 ) -> Tuple[Playwright, BrowserContext, Page]:
     """
     Launch a persistent Chromium/Chrome browser session.
@@ -89,10 +96,20 @@ def launch_persistent_browser(
         user_data_dir: Custom directory path for profile storage.
         channel: Browser distribution to use ('chrome', 'msedge', or None for bundled chromium).
         extra_args: Additional command-line flags for Chromium.
+        cdp_port: Remote debugging port for DevTools Protocol (CDP), or None to disable.
+        cdp_host: Remote debugging host address (default: "127.0.0.1").
 
     Returns:
         Tuple of (Playwright, BrowserContext, Page).
     """
+    if cdp_port is not None:
+        if not isinstance(cdp_port, int) or isinstance(cdp_port, bool):
+            raise TypeError(f"cdp_port must be an integer or None, got {type(cdp_port).__name__}")
+        if not (1 <= cdp_port <= 65535):
+            raise ValueError(f"cdp_port must be between 1 and 65535, got {cdp_port}")
+    if not isinstance(cdp_host, str) or not cdp_host:
+        raise TypeError(f"cdp_host must be a non-empty string, got {type(cdp_host).__name__}")
+
     profile_path = get_profile_dir(user_data_dir)
     os.makedirs(profile_path, exist_ok=True)
     clean_locks(profile_path)
@@ -100,6 +117,9 @@ def launch_persistent_browser(
     args = list(ANTI_DETECTION_ARGS)
     if extra_args:
         args.extend(extra_args)
+    if cdp_port is not None:
+        args.append(f"--remote-debugging-port={cdp_port}")
+        args.append(f"--remote-debugging-address={cdp_host}")
 
     p = sync_playwright().start()
 
@@ -114,3 +134,84 @@ def launch_persistent_browser(
 
     page = context.pages[0] if context.pages else context.new_page()
     return p, context, page
+
+
+def is_cdp_active(
+    port: int = DEFAULT_CDP_PORT,
+    host: str = DEFAULT_CDP_HOST,
+    timeout: float = 1.0,
+) -> bool:
+    """
+    Check if a Chrome DevTools Protocol (CDP) endpoint is active and responsive.
+
+    Queries `http://{host}:{port}/json/version` and verifies HTTP status 200
+    and that the parsed JSON response contains the 'Browser' key.
+
+    Args:
+        port: Remote debugging port to check (default: DEFAULT_CDP_PORT, 9222).
+        host: Remote debugging host address (default: DEFAULT_CDP_HOST, "127.0.0.1").
+        timeout: Network timeout in seconds (default: 1.0).
+
+    Returns:
+        True if the CDP endpoint is responsive and returns valid browser metadata,
+        False otherwise (connection refused, timeout, invalid JSON, or non-200 status).
+    """
+    if not isinstance(port, int) or isinstance(port, bool):
+        raise TypeError(f"port must be an integer, got {type(port).__name__}")
+    if not (1 <= port <= 65535):
+        raise ValueError(f"port must be between 1 and 65535, got {port}")
+    if not isinstance(host, str) or not host.strip():
+        raise TypeError(f"host must be a non-empty string, got {type(host).__name__}")
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+        raise ValueError(f"timeout must be a positive number, got {timeout}")
+
+    url = f"http://{host}:{port}/json/version"
+    req = urllib.request.Request(url, headers={"User-Agent": "playwright-chrome"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            status = getattr(response, "status", getattr(response, "code", None))
+            if status != 200:
+                return False
+            payload = response.read().decode("utf-8", errors="replace")
+            data = json.loads(payload)
+            return isinstance(data, dict) and "Browser" in data
+    except Exception:
+        return False
+
+
+def connect_cdp(
+    port: int = DEFAULT_CDP_PORT,
+    host: str = DEFAULT_CDP_HOST,
+) -> Tuple[Playwright, Browser, BrowserContext, Page]:
+    """
+    Connect to an existing Chrome browser instance exposing Chrome DevTools Protocol (CDP).
+
+    Attaches a Playwright client session to the active browser over CDP without
+    launching a new browser process or altering persistent profile directory locks.
+    Closing the returned `browser` instance (`browser.close()`) closes the CDP client
+    connection without terminating the persistent Chrome host process.
+
+    Args:
+        port: Remote debugging port for CDP (default: DEFAULT_CDP_PORT, 9222).
+        host: Remote debugging host address (default: DEFAULT_CDP_HOST, "127.0.0.1").
+
+    Returns:
+        Tuple of (Playwright, Browser, BrowserContext, Page).
+    """
+    if not isinstance(port, int) or isinstance(port, bool):
+        raise TypeError(f"port must be an integer, got {type(port).__name__}")
+    if not (1 <= port <= 65535):
+        raise ValueError(f"port must be between 1 and 65535, got {port}")
+    if not isinstance(host, str) or not host.strip():
+        raise TypeError(f"host must be a non-empty string, got {type(host).__name__}")
+
+    p = sync_playwright().start()
+    endpoint_url = f"http://{host}:{port}"
+    try:
+        browser = p.chromium.connect_over_cdp(endpoint_url)
+        context = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = context.pages[0] if context.pages else context.new_page()
+        return p, browser, context, page
+    except Exception:
+        p.stop()
+        raise

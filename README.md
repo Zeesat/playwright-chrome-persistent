@@ -153,18 +153,65 @@ set PLAYWRIGHT_CHROME_PROFILE=D:\custom\automation_profile
 
 ---
 
+# Remote Debugging & CDP Integration (Port 9222)
+
+Every persistent Chrome instance launched by this package automatically opens a Chrome DevTools Protocol (CDP) remote debugging port. By default, it binds to loopback address `127.0.0.1` on port `9222`.
+
+This allows external scripts, Playwright MCP tools, and AI agents to attach to the running browser without profile lock collisions.
+
+### Direct Playwright Connection
+External scripts or AI tools can connect to the running session directly through Playwright:
+
+```python
+from playwright.sync_api import sync_playwright
+
+with sync_playwright() as p:
+    browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+    context = browser.contexts[0]
+    page = context.pages[0] if context.pages else context.new_page()
+    page.goto("https://myaccount.google.com/")
+```
+
+### Python Helpers
+The package exports high-level helper functions for CDP connectivity:
+
+```python
+from playwright_chrome import connect_cdp, is_cdp_active
+
+# Check if a browser session is accepting CDP connections on port 9222
+if is_cdp_active(port=9222):
+    # Attach over CDP without causing profile lock collisions
+    p, browser, context, page = connect_cdp(port=9222)
+    page.goto("https://myaccount.google.com/")
+    
+    # Detach cleanly (leaves host browser running)
+    browser.close()
+    p.stop()
+```
+
+### CLI Support and Seamless Tab Reuse
+All CLI subcommands support `--port PORT` (or global `--port PORT` option) to target custom CDP ports.
+
+When executing `playwright-chrome open <url>` against an already-running session:
+1. The CLI detects the active CDP service at `127.0.0.1:9222` (or specified `--port`).
+2. It reuses an open tab or opens a new tab seamlessly inside the running browser.
+3. The page navigates to the requested URL, and the CLI detaches gracefully without interrupting the host browser process.
+
+---
+
 ## CLI Reference
 
 | Command | Arguments | Description |
 |---|---|---|
-| `login` | None | Opens visible Chrome to perform initial Google login. |
-| `open` | `[url]` `[--headless]` | Opens persistent browser to specified URL (default: Google Account). |
-| `status` | None | Displays profile path, initialization status, disk size, and cookie count. |
+| `login` | `[--port PORT]` | Opens visible Chrome to perform initial Google login. |
+| `open` | `[url]` `[--headless]` `[--port PORT]` | Opens persistent browser to specified URL, reusing active session if present. |
+| `status` | `[--port PORT]` | Displays profile path, CDP readiness, initialization status, disk size, and cookie count. |
 | `clean-locks` | None | Removes stale lockfiles if browser process crashed unexpectedly. |
 
 ### Global Options
 - `--profile PATH`: Override profile directory location.
 - `--channel {chrome,msedge}`: Specify browser executable channel (default: `chrome`).
+- `--port PORT`: Set Chrome DevTools Protocol remote debugging port (default: `9222`).
 
 ---
 

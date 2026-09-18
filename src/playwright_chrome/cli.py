@@ -8,6 +8,10 @@ from .core import (
     get_profile_dir,
     is_profile_initialized,
     clean_locks,
+    is_cdp_active,
+    connect_cdp,
+    DEFAULT_CDP_PORT,
+    DEFAULT_CDP_HOST,
 )
 
 
@@ -18,12 +22,23 @@ def cmd_login(args: argparse.Namespace) -> int:
     print("  PLAYWRIGHT PERSISTENT CHROME - INTERACTIVE LOGIN")
     print(f"  Target Profile: {profile_path}")
     print("=" * 65)
+
+    if hasattr(args, "port") and not (1 <= args.port <= 65535):
+        print(f"[-] Error: Port must be between 1 and 65535, got {args.port}", file=sys.stderr)
+        return 1
+
+    port = getattr(args, "port", DEFAULT_CDP_PORT)
+    if is_cdp_active(port=port):
+        print(f"[!] Warning: Active Chrome instance detected on CDP port {port}.")
+        print("[!] Note: Launching another instance on the same profile may cause lock conflicts.")
+
     print("[+] Launching Chrome persistent context in visible mode...")
 
     p, context, page = launch_persistent_browser(
         headless=False,
         user_data_dir=profile_path,
         channel=args.channel,
+        cdp_port=port,
     )
 
     login_url = "https://accounts.google.com/"
@@ -55,15 +70,39 @@ def cmd_login(args: argparse.Namespace) -> int:
 
 
 def cmd_open(args: argparse.Namespace) -> int:
-    """Open persistent browser to a specified URL."""
+    """Open persistent browser to a specified URL, reusing active CDP session if running."""
     profile_path = get_profile_dir(args.profile)
     url = args.url or "https://myaccount.google.com/"
+
+    if hasattr(args, "port") and not (1 <= args.port <= 65535):
+        print(f"[-] Error: Port must be between 1 and 65535, got {args.port}", file=sys.stderr)
+        return 1
+
+    port = getattr(args, "port", DEFAULT_CDP_PORT)
+    if is_cdp_active(port=port):
+        print(f"[+] Active Chrome instance detected on CDP port {port}.")
+        p, browser, context, page = connect_cdp(port=port)
+        current_url = page.url.strip().rstrip("/")
+        if current_url in ("about:blank", ""):
+            target_page = page
+        else:
+            target_page = context.new_page()
+
+        target_page.goto(url)
+        print(f"[+] Reconnected over CDP and opened: {url}")
+        try:
+            browser.close()
+        except Exception:
+            pass
+        p.stop()
+        return 0
 
     print(f"[+] Opening {url} with profile: {profile_path} (headless={args.headless})")
     p, context, page = launch_persistent_browser(
         headless=args.headless,
         user_data_dir=profile_path,
         channel=args.channel,
+        cdp_port=port,
     )
 
     page.goto(url)
@@ -82,10 +121,21 @@ def cmd_open(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    """Inspect and report profile initialization and cookie state."""
+    """Inspect and report profile initialization, CDP endpoint, and cookie state."""
     profile_path = Path(get_profile_dir(args.profile))
     print(f"Profile Directory: {profile_path}")
     print(f"Exists:            {profile_path.exists()}")
+
+    if hasattr(args, "port") and not (1 <= args.port <= 65535):
+        print(f"[-] Error: Port must be between 1 and 65535, got {args.port}", file=sys.stderr)
+        return 1
+
+    port = getattr(args, "port", DEFAULT_CDP_PORT)
+    cdp_active = is_cdp_active(port=port)
+    if cdp_active:
+        print(f"CDP Status (127.0.0.1:{port}): Active (Ready for agent attach)")
+    else:
+        print(f"CDP Status (127.0.0.1:{port}): Inactive")
 
     if not profile_path.exists():
         print("Status:            Not initialized. Run 'playwright-chrome login' first.")
@@ -132,6 +182,26 @@ def cmd_clean_locks(args: argparse.Namespace) -> int:
 
 
 def main():
+    common_parser = argparse.ArgumentParser(add_help=False)
+    common_parser.add_argument(
+        "--profile",
+        "-p",
+        help="Path to custom profile directory (defaults to .chrome_profile in cwd or PLAYWRIGHT_CHROME_PROFILE)",
+        default=argparse.SUPPRESS,
+    )
+    common_parser.add_argument(
+        "--channel",
+        "-c",
+        help="Browser channel to use (default: chrome)",
+        default=argparse.SUPPRESS,
+    )
+    common_parser.add_argument(
+        "--port",
+        type=int,
+        default=argparse.SUPPRESS,
+        help=f"CDP remote debugging port (default: {DEFAULT_CDP_PORT})",
+    )
+
     parser = argparse.ArgumentParser(
         prog="playwright-chrome",
         description="Persistent Google Chrome profile manager for Playwright automation without session reset.",
@@ -148,28 +218,53 @@ def main():
         help="Browser channel to use (default: chrome)",
         default="chrome",
     )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_CDP_PORT,
+        help="CDP remote debugging port (default: 9222)",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
     # login command
-    login_parser = subparsers.add_parser("login", help="Open visible Chrome to login Google account once")
+    login_parser = subparsers.add_parser(
+        "login",
+        parents=[common_parser],
+        help="Open visible Chrome to login Google account once",
+    )
     login_parser.set_defaults(func=cmd_login)
 
     # open command
-    open_parser = subparsers.add_parser("open", help="Open persistent browser session to a URL")
+    open_parser = subparsers.add_parser(
+        "open",
+        parents=[common_parser],
+        help="Open persistent browser session to a URL",
+    )
     open_parser.add_argument("url", nargs="?", default="https://myaccount.google.com/", help="URL to open")
     open_parser.add_argument("--headless", action="store_true", help="Run in headless mode")
     open_parser.set_defaults(func=cmd_open)
 
     # status command
-    status_parser = subparsers.add_parser("status", help="Display profile status, disk usage, and cookies")
+    status_parser = subparsers.add_parser(
+        "status",
+        parents=[common_parser],
+        help="Display profile status, disk usage, and cookies",
+    )
     status_parser.set_defaults(func=cmd_status)
 
     # clean-locks command
-    locks_parser = subparsers.add_parser("clean-locks", help="Remove stale lock files if browser crashed")
+    locks_parser = subparsers.add_parser(
+        "clean-locks",
+        parents=[common_parser],
+        help="Remove stale lock files if browser crashed",
+    )
     locks_parser.set_defaults(func=cmd_clean_locks)
 
     args = parser.parse_args()
+    if hasattr(args, "port") and not (1 <= args.port <= 65535):
+        parser.error(f"argument --port: Port must be between 1 and 65535, got {args.port}")
+
     if not args.command:
         # Default action when run with no subcommands is login helper
         return cmd_login(args)

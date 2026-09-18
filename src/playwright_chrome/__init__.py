@@ -5,15 +5,23 @@ and preserved DPAPI credential storage for uninterrupted Google account sessions
 """
 
 from .core import (
+    DEFAULT_CDP_PORT,
+    DEFAULT_CDP_HOST,
     launch_persistent_browser,
     get_profile_dir,
     is_profile_initialized,
     clean_locks,
+    is_cdp_active,
+    connect_cdp,
 )
 
 __all__ = [
+    "DEFAULT_CDP_PORT",
+    "DEFAULT_CDP_HOST",
     "launch_persistent_browser",
     "get_profile_dir",
     "is_profile_initialized",
     "clean_locks",
+    "is_cdp_active",
+    "connect_cdp",
 ]
