@@ -2,6 +2,24 @@
 
 A robust, self-contained automation profile manager and CLI utility for Playwright on Windows, macOS, and Linux. It maintains persistent Google account authentication across test and automation runs without session invalidation or cookie resets.
 
+> **⚡ AI QUICK USE (NO NEED TO READ .PY SOURCE FILES)**:
+> - **Open URL in persistent browser (CLI)**: `playwright-chrome open "<url>"` (auto-reuses CDP on 9222 or launches new session)
+> - **Interactive Google login**: `playwright-chrome login`
+> - **Attach to running browser in Python**:
+>   ```python
+>   from playwright_chrome import connect_cdp
+>   p, browser, context, page = connect_cdp(9222)
+>   page.goto("<url>")
+>   browser.close()  # Detaches client only, keeps host Chrome alive
+>   p.stop()
+>   ```
+> - **Launch fresh persistent Chrome in Python**:
+>   ```python
+>   from playwright_chrome import launch_persistent_browser
+>   p, context, page = launch_persistent_browser(headless=False)
+>   ```
+> - **Status & Lock cleanup**: `playwright-chrome status` and `playwright-chrome clean-locks`
+
 ---
 
 ## Technical Problem & Architecture
