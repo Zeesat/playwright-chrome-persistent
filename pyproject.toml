@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "playwright>=1.40.0",
+    "mcp>=1.0.0",
 ]
 
 [project.scripts]
