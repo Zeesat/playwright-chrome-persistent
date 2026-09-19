@@ -219,35 +219,67 @@ def connect_cdp(
         raise
 
 
-def ensure_host(
+def find_chrome_executable(channel: str = "chrome") -> Optional[str]:
+    import shutil
+
+    if channel == "msedge":
+        edge_candidates = [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ]
+        for c in edge_candidates:
+            if os.path.exists(c):
+                return c
+        return shutil.which("msedge") or shutil.which("microsoft-edge")
+
+    chrome_candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    ]
+    for c in chrome_candidates:
+        if os.path.exists(c):
+            return c
+    return (
+        shutil.which("google-chrome")
+        or shutil.which("google-chrome-stable")
+        or shutil.which("chrome")
+        or shutil.which("chromium")
+    )
+
+
+def spawn_chrome_host(
     port: int = DEFAULT_CDP_PORT,
     host: str = DEFAULT_CDP_HOST,
     profile: Optional[str] = None,
     channel: str = "chrome",
     headless: bool = False,
-    timeout: float = 12.0,
-) -> bool:
-    if is_cdp_active(port=port, host=host):
-        return True
-
+    extra_args: Optional[list] = None,
+    url: Optional[str] = None,
+) -> Optional[int]:
     profile_path = get_profile_dir(profile)
+    os.makedirs(profile_path, exist_ok=True)
     clean_locks(profile_path)
 
-    cmd = [
-        sys.executable,
-        "-m",
-        "playwright_chrome.host",
-        "--port",
-        str(port),
-        "--host",
-        str(host),
-        "--profile",
-        profile_path,
-        "--channel",
-        channel,
+    exe = find_chrome_executable(channel=channel)
+    if not exe:
+        return None
+
+    args = [
+        exe,
+        f"--user-data-dir={profile_path}",
+        f"--remote-debugging-port={port}",
+        f"--remote-debugging-address={host}",
     ]
+    args.extend(ANTI_DETECTION_ARGS)
     if headless:
-        cmd.append("--headless")
+        args.append("--headless=new")
+    if extra_args:
+        args.extend(extra_args)
+    if url:
+        args.append(url)
 
     creationflags = 0
     if sys.platform == "win32":
@@ -256,8 +288,8 @@ def ensure_host(
             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
         )
 
-    subprocess.Popen(
-        cmd,
+    proc = subprocess.Popen(
+        args,
         creationflags=creationflags,
         close_fds=(sys.platform != "win32"),
         stdout=subprocess.DEVNULL,
@@ -265,11 +297,89 @@ def ensure_host(
         stdin=subprocess.DEVNULL,
     )
 
+    meta_file = Path(profile_path) / ".cdp_host.json"
+    meta_data = {
+        "pid": proc.pid,
+        "port": port,
+        "host": host,
+        "profile": profile_path,
+        "channel": channel,
+        "started_at": time.time(),
+    }
+    try:
+        with open(meta_file, "w", encoding="utf-8") as f:
+            json.dump(meta_data, f)
+    except Exception:
+        pass
+
+    return proc.pid
+
+
+def ensure_host(
+    port: int = DEFAULT_CDP_PORT,
+    host: str = DEFAULT_CDP_HOST,
+    profile: Optional[str] = None,
+    channel: str = "chrome",
+    headless: bool = False,
+    timeout: float = 6.0,
+) -> bool:
+    if is_cdp_active(port=port, host=host):
+        return True
+
+    spawn_chrome_host(
+        port=port,
+        host=host,
+        profile=profile,
+        channel=channel,
+        headless=headless,
+    )
+
     start_time = time.time()
     while time.time() - start_time < timeout:
         if is_cdp_active(port=port, host=host):
             return True
-        time.sleep(0.3)
+        time.sleep(0.2)
 
     return is_cdp_active(port=port, host=host)
+
+
+def stop_host(
+    port: int = DEFAULT_CDP_PORT,
+    profile: Optional[str] = None,
+) -> bool:
+    profile_path = get_profile_dir(profile)
+    meta_file = Path(profile_path) / ".cdp_host.json"
+
+    if meta_file.exists():
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            pid = meta.get("pid")
+            if pid:
+                if sys.platform == "win32":
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(pid), "/T"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                else:
+                    import signal
+                    os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        try:
+            meta_file.unlink()
+        except OSError:
+            pass
+
+    if sys.platform == "win32":
+        try:
+            cmd = f'Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like "*{profile_path}*" }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}'
+            subprocess.run(["powershell", "-NoProfile", "-Command", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+    clean_locks(profile_path)
+    return not is_cdp_active(port=port)
+
 

@@ -15,6 +15,8 @@ from .core import (
     is_cdp_active,
     connect_cdp,
     ensure_host,
+    stop_host,
+    spawn_chrome_host,
     DEFAULT_CDP_PORT,
     DEFAULT_CDP_HOST,
 )
@@ -83,71 +85,52 @@ def cmd_open(args: argparse.Namespace) -> int:
         return 1
 
     port = getattr(args, "port", DEFAULT_CDP_PORT)
-    is_non_interactive = not sys.stdin.isatty()
-    should_detach = getattr(args, "detach", False) or is_non_interactive
-
-    if not is_cdp_active(port=port):
-        if should_detach:
-            print(f"[+] Active Chrome host not detected. Auto-starting persistent host daemon on 127.0.0.1:{port}...")
-            ok = ensure_host(
-                port=port,
-                profile=args.profile,
-                channel=args.channel,
-                headless=args.headless,
-            )
-            if not ok:
-                print(f"[-] Error: Failed to start Chrome host daemon on port {port}.", file=sys.stderr)
-                return 1
 
     if is_cdp_active(port=port):
-        print(f"[+] Active Chrome instance detected on CDP port {port}.")
-        p, browser, context, page = connect_cdp(port=port)
-        current_url = page.url.strip().rstrip("/")
-        if current_url in ("about:blank", ""):
-            target_page = page
-        else:
-            target_page = context.new_page()
-
-        target_page.goto(url)
-        print(f"[+] Reconnected over CDP and opened: {url}")
+        print(f"[+] Active Chrome detected on CDP port {port}.")
         try:
-            browser.close()
-        except Exception:
-            pass
-        p.stop()
-        return 0
+            p, browser, context, page = connect_cdp(port=port)
+            current_url = page.url.strip().rstrip("/")
+            if current_url in ("about:blank", ""):
+                target_page = page
+            else:
+                target_page = context.new_page()
 
-    print(f"[+] Opening {url} with profile: {profile_path} (headless={args.headless})")
-    p, context, page = launch_persistent_browser(
-        headless=args.headless,
-        user_data_dir=profile_path,
+            target_page.goto(url)
+            print(f"[+] Reconnected over CDP and opened: {url}")
+            try:
+                browser.close()
+            except Exception:
+                pass
+            p.stop()
+            return 0
+        except Exception as err:
+            print(f"[!] Warning: CDP reconnect failed ({err}). Spawning fresh instance...", file=sys.stderr)
+
+    print(f"[+] Launching persistent Chrome to {url} (profile: {profile_path}, headless={args.headless})...")
+    pid = spawn_chrome_host(
+        port=port,
+        profile=profile_path,
         channel=args.channel,
-        cdp_port=port,
+        headless=args.headless,
+        url=url,
     )
-
-    page.goto(url)
-    print(f"[+] Page loaded: {page.title()} ({page.url})")
-
-    if not args.headless:
-        print("[+] Press [ENTER] in terminal to close the browser session...")
-        try:
-            input()
-        except (EOFError, KeyboardInterrupt):
-            pass
-
-    context.close()
-    p.stop()
-    return 0
+    if pid:
+        print(f"[+] Chrome launched (PID: {pid}). DevTools listening on 127.0.0.1:{port}")
+        return 0
+    else:
+        print("[-] Error: Failed to find or launch Chrome executable.", file=sys.stderr)
+        return 1
 
 
 def cmd_ensure_host(args: argparse.Namespace) -> int:
     port = getattr(args, "port", DEFAULT_CDP_PORT)
     profile_path = get_profile_dir(args.profile)
     if is_cdp_active(port=port):
-        print(f"[+] Persistent Chrome host is ALREADY ACTIVE on 127.0.0.1:{port} (profile: {profile_path})")
+        print(f"[+] Persistent Chrome is ALREADY ACTIVE on 127.0.0.1:{port} (profile: {profile_path})")
         return 0
 
-    print(f"[+] Starting persistent Chrome host daemon on 127.0.0.1:{port} (profile: {profile_path})...")
+    print(f"[+] Starting persistent Chrome on 127.0.0.1:{port} (profile: {profile_path})...")
     ok = ensure_host(
         port=port,
         profile=args.profile,
@@ -155,55 +138,21 @@ def cmd_ensure_host(args: argparse.Namespace) -> int:
         headless=getattr(args, "headless", False),
     )
     if ok:
-        print(f"[+] Success! Persistent Chrome host is READY and listening on 127.0.0.1:{port}")
+        print(f"[+] Persistent Chrome is READY and listening on 127.0.0.1:{port}")
         return 0
     else:
-        print(f"[-] Error: Persistent Chrome host failed to start within timeout on port {port}", file=sys.stderr)
+        print(f"[-] Error: Persistent Chrome failed to start on port {port}", file=sys.stderr)
         return 1
 
 
 def cmd_stop_host(args: argparse.Namespace) -> int:
     port = getattr(args, "port", DEFAULT_CDP_PORT)
-    profile_path = get_profile_dir(args.profile)
-    stop_flag = Path(profile_path) / ".stop_host"
-    meta_file = Path(profile_path) / ".cdp_host.json"
-
-    if not is_cdp_active(port=port):
-        print(f"[+] No active Chrome host detected on 127.0.0.1:{port}.")
-        clean_locks(profile_path)
-        return 0
-
-    print(f"[+] Sending shutdown signal to Chrome host on 127.0.0.1:{port}...")
-    try:
-        stop_flag.touch()
-    except OSError:
-        pass
-
-    for _ in range(25):
-        if not is_cdp_active(port=port):
-            break
-        time.sleep(0.2)
-
-    if is_cdp_active(port=port) and meta_file.exists():
-        try:
-            with open(meta_file, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-            pid = meta.get("pid")
-            if pid and sys.platform == "win32":
-                subprocess.run(
-                    ["taskkill", "/F", "/PID", str(pid), "/T"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-        except Exception:
-            pass
-
-    clean_locks(profile_path)
-    if not is_cdp_active(port=port):
-        print(f"[+] Chrome host stopped cleanly.")
+    ok = stop_host(port=port, profile=args.profile)
+    if ok:
+        print("[+] Chrome host stopped cleanly.")
         return 0
     else:
-        print(f"[!] Warning: Chrome host may still be running.", file=sys.stderr)
+        print("[!] Warning: Chrome host may still be running.", file=sys.stderr)
         return 1
 
 
