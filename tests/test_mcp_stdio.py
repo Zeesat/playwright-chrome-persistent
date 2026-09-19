@@ -5,7 +5,7 @@ Verifies:
 1. Subprocess spawning with stdio communication.
 2. 'initialize' request and serverInfo verification (server name: persistent-chrome).
 3. 'notifications/initialized' notification delivery.
-4. 'tools/list' request and verification of all 7 persistent Chrome tools.
+4. 'tools/list' request and verification of all 10 persistent Chrome tools.
 5. 'tools/call' request for 'persistent_chrome_status' returning valid JSON status content.
 6. Negative case: sending invalid JSON string returns an error without crashing the server process.
 7. Clean subprocess shutdown without leaving orphaned processes.
@@ -30,6 +30,9 @@ EXPECTED_TOOLS: Set[str] = {
     "persistent_chrome_screenshot",
     "persistent_chrome_status",
     "persistent_chrome_close",
+    "persistent_chrome_ensure_host",
+    "persistent_chrome_stop_host",
+    "persistent_chrome_clean_locks",
 }
 
 
@@ -266,7 +269,7 @@ class TestMCPStdioProtocol(unittest.TestCase):
             EXPECTED_TOOLS,
             f"Tools mismatch. Expected {EXPECTED_TOOLS}, found {tool_names}",
         )
-        print(f"[PASS] Step 3: tools/list verified all 7 tools: {sorted(tool_names)}")
+        print(f"[PASS] Step 3: tools/list verified all 10 tools: {sorted(tool_names)}")
 
         # --- Step 4: tools/call request for persistent_chrome_status ---
         status_call_request = {
@@ -311,6 +314,23 @@ class TestMCPStdioProtocol(unittest.TestCase):
             f"Status JSON missing expected keys. Expected: {expected_status_keys}, Found: {set(status_data.keys())}",
         )
         print(f"[PASS] Step 4: tools/call persistent_chrome_status returned valid JSON: {status_data}")
+
+        clean_locks_request = {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "persistent_chrome_clean_locks",
+                "arguments": {},
+            },
+        }
+        self.client.send_json(clean_locks_request)
+        clean_locks_response = self.client.read_json()
+        self.assertEqual(clean_locks_response.get("id"), 10)
+        self.assertIn("result", clean_locks_response)
+        clean_content = clean_locks_response["result"]["content"][0]["text"]
+        self.assertIn("Cleaned stale lockfiles", clean_content)
+        print(f"[PASS] Step 4b: tools/call persistent_chrome_clean_locks succeeded: {clean_content}")
 
         # --- Step 5: Negative test case with invalid JSON ---
         invalid_json_line = "{invalid_json_syntax: true,"

@@ -20,9 +20,11 @@ from .core import (
     DEFAULT_CDP_PORT,
     clean_locks,
     connect_cdp,
+    ensure_host,
     get_profile_dir,
     is_cdp_active,
     launch_persistent_browser,
+    stop_host,
 )
 
 SNAPSHOT_JS_SCRIPT = """() => {
@@ -203,6 +205,14 @@ class BrowserSessionManager:
                 self._close_worker()
 
         # 2. Check if Chrome host is running on CDP port 9222
+        if not is_cdp_active(port=self.cdp_port, host=self.cdp_host):
+            ensure_host(
+                port=self.cdp_port,
+                host=self.cdp_host,
+                profile=self.profile,
+                headless=self.headless,
+            )
+
         if is_cdp_active(port=self.cdp_port, host=self.cdp_host):
             self.p, self.browser, self.context, self.page = connect_cdp(
                 port=self.cdp_port, host=self.cdp_host
@@ -445,6 +455,58 @@ def persistent_chrome_close() -> str:
         return session_manager.close()
     except Exception as exc:
         return f"Error closing session: {type(exc).__name__}: {str(exc)}"
+
+
+@mcp.tool()
+def persistent_chrome_ensure_host(headless: bool = False) -> str:
+    """Ensure persistent Chrome host daemon is running in background without terminal stalling.
+
+    Spawns or verifies the detached Chrome host daemon on 127.0.0.1:9222 using the persistent profile.
+    AI agents must call this tool directly instead of executing 'playwright-chrome ensure-host' in terminal.
+    """
+    try:
+        profile_path = get_profile_dir(session_manager.profile)
+        active = ensure_host(
+            port=session_manager.cdp_port,
+            host=session_manager.cdp_host,
+            profile=session_manager.profile,
+            headless=headless,
+        )
+        if active:
+            return (
+                f"Persistent Chrome host daemon is READY and listening on "
+                f"http://{session_manager.cdp_host}:{session_manager.cdp_port} "
+                f"(profile: {profile_path}, headless={headless})"
+            )
+        return f"Failed to start persistent Chrome host daemon on port {session_manager.cdp_port}."
+    except Exception as exc:
+        return f"Error ensuring host: {type(exc).__name__}: {str(exc)}"
+
+
+@mcp.tool()
+def persistent_chrome_stop_host() -> str:
+    """Gracefully stop the persistent Chrome host daemon and clean locks without terminal stalling."""
+    try:
+        session_manager.close()
+        stopped = stop_host(
+            port=session_manager.cdp_port,
+            profile=session_manager.profile,
+        )
+        if stopped:
+            return "Persistent Chrome host daemon stopped successfully and locks cleaned."
+        return "Host daemon process stopped, but CDP port may still be in use."
+    except Exception as exc:
+        return f"Error stopping host: {type(exc).__name__}: {str(exc)}"
+
+
+@mcp.tool()
+def persistent_chrome_clean_locks() -> str:
+    """Clean stale profile lockfiles (SingletonLock) after crash or forced termination."""
+    try:
+        profile_path = clean_locks(session_manager.profile)
+        return f"Cleaned stale lockfiles in profile: {profile_path}"
+    except Exception as exc:
+        return f"Error cleaning locks: {type(exc).__name__}: {str(exc)}"
 
 
 def main():

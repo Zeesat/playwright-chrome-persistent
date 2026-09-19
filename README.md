@@ -3,8 +3,9 @@
 A robust, self-contained automation profile manager and CLI utility for Playwright on Windows, macOS, and Linux. It maintains persistent Google account authentication across test and automation runs without session invalidation or cookie resets.
 
 > **⚡ AI QUICK USE (NO NEED TO READ .PY SOURCE FILES)**:
+> - **Native MCP Tools (RECOMMENDED FOR AI AGENTS)**: AI agents should always use native MCP tools (`persistent_chrome_ensure_host`, `persistent_chrome_open`, `persistent_chrome_snapshot`, `persistent_chrome_click`, `persistent_chrome_type`, `persistent_chrome_screenshot`, `persistent_chrome_status`, `persistent_chrome_stop_host`, `persistent_chrome_clean_locks`). Using `persistent_chrome_ensure_host` prevents terminal stalling and subshell pipe hangs.
 > - **Open URL in persistent browser (Non-blocking CLI)**: `playwright-chrome open "<url>"` (auto-reuses CDP on 9222 or auto-spawns background host daemon)
-> - **Host daemon lifecycle**: `playwright-chrome ensure-host` and `playwright-chrome stop-host`
+> - **Host daemon lifecycle (CLI)**: `playwright-chrome ensure-host` and `playwright-chrome stop-host` (for human manual setup only; AI agents should use MCP tools)
 > - **Interactive Google login**: `playwright-chrome login`
 > - **Attach to running browser in Python**:
 >   ```python
@@ -220,19 +221,22 @@ When executing `playwright-chrome open <url>` against an already-running session
 
 # OpenCode MCP Server Integration
 
-The package includes a built-in FastMCP server (`persistent-chrome-mcp`) that exposes 7 high-level browser tools directly to OpenCode and AI agents.
+The package includes a built-in FastMCP server (`persistent-chrome-mcp`) that exposes 10 high-level browser tools directly to OpenCode and AI agents.
 
 ### Tool Reference Table
 
 | Tool Name | Parameters | Description |
 |---|---|---|
-| `persistent_chrome_open` | `url: str`, `headless: bool = False` | Navigates the persistent Chrome instance to the specified URL. Automatically connects to CDP on 9222 or launches Chrome. |
+| `persistent_chrome_open` | `url: str`, `headless: bool = False` | Navigates the persistent Chrome instance to the specified URL. Automatically connects to CDP on 9222 or auto-ensures host daemon. |
 | `persistent_chrome_snapshot` | None | Takes a structural text snapshot of the active web page, returning text and interactive element maps. |
 | `persistent_chrome_click` | `selector: str` | Clicks an interactive element on the page using a CSS or text selector. |
-| `persistent_chrome_type` | `selector: str`, `text: str` | Clears and types specified text into an input or textarea element. |
-| `persistent_chrome_screenshot` | `path: str = "screenshot.png"` | Captures a PNG screenshot of the current viewport or full page. |
+| `persistent_chrome_type` | `selector: str`, `text: str`, `submit: bool = False` | Clears and types specified text into an input or textarea element, optionally pressing Enter. |
+| `persistent_chrome_screenshot` | `filename: Optional[str] = None` | Captures a PNG screenshot of the current page. |
 | `persistent_chrome_status` | None | Returns background host status, profile path, cookie count, and active page URL. |
 | `persistent_chrome_close` | None | Detaches the MCP client cleanly from Chrome while keeping the background host session alive. |
+| `persistent_chrome_ensure_host` | `headless: bool = False` | Spawns or verifies the detached Chrome host daemon on port 9222 without agent terminal stalling. |
+| `persistent_chrome_stop_host` | None | Gracefully terminates background Chrome daemon and removes lockfiles without terminal stalling. |
+| `persistent_chrome_clean_locks` | None | Removes stale lockfiles (`SingletonLock`) from the profile directory. |
 
 ### Registering in `opencode.json`
 
