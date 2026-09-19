@@ -218,6 +218,46 @@ When executing `playwright-chrome open <url>` against an already-running session
 
 ---
 
+# OpenCode MCP Server Integration
+
+The package includes a built-in FastMCP server (`persistent-chrome-mcp`) that exposes 7 high-level browser tools directly to OpenCode and AI agents.
+
+### Tool Reference Table
+
+| Tool Name | Parameters | Description |
+|---|---|---|
+| `persistent_chrome_open` | `url: str`, `headless: bool = False` | Navigates the persistent Chrome instance to the specified URL. Automatically connects to CDP on 9222 or launches Chrome. |
+| `persistent_chrome_snapshot` | None | Takes a structural text snapshot of the active web page, returning text and interactive element maps. |
+| `persistent_chrome_click` | `selector: str` | Clicks an interactive element on the page using a CSS or text selector. |
+| `persistent_chrome_type` | `selector: str`, `text: str` | Clears and types specified text into an input or textarea element. |
+| `persistent_chrome_screenshot` | `path: str = "screenshot.png"` | Captures a PNG screenshot of the current viewport or full page. |
+| `persistent_chrome_status` | None | Returns background host status, profile path, cookie count, and active page URL. |
+| `persistent_chrome_close` | None | Detaches the MCP client cleanly from Chrome while keeping the background host session alive. |
+
+### Registering in `opencode.json`
+
+To register the native MCP server in OpenCode, add it to your `opencode.json` or `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcpServers": {
+    "persistent-chrome": {
+      "command": "persistent-chrome-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+### Advantages Over Shell Execution
+
+1. **Zero Shell Subprocess Stalling**: Running CLI commands directly in agent subshells can block or hang on stdout/stderr handles; MCP tool calls execute natively via JSON-RPC.
+2. **Dedicated Thread & Session Isolation**: The MCP server manages Playwright calls on a dedicated background worker thread, eliminating greenlet thread-switching crashes and asyncio event loop conflicts.
+3. **Automatic Re-use and CDP Fallback**: The MCP server dynamically detects running CDP instances at `127.0.0.1:9222`, reusing active browser host daemons without crashing on profile lock files (`SingletonLock`).
+4. **Structured Error Handling**: All tools catch exceptions internally and return clean, descriptive error messages instead of terminating the agent session or raising unhandled RPC errors.
+
+---
+
 ## CLI Reference
 
 | Command | Arguments | Description |
