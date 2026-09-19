@@ -14,7 +14,11 @@ from .core import (
     is_cdp_active,
     connect_cdp,
     ensure_host,
+    stop_host,
+    spawn_chrome_host,
+    find_chrome_executable,
 )
+from . import mcp_server
 
 __all__ = [
     "DEFAULT_CDP_PORT",
@@ -26,4 +30,8 @@ __all__ = [
     "is_cdp_active",
     "connect_cdp",
     "ensure_host",
+    "stop_host",
+    "spawn_chrome_host",
+    "find_chrome_executable",
+    "mcp_server",
 ]
